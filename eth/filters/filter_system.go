@@ -28,6 +28,7 @@ import (
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -348,11 +349,11 @@ func (es *EventSystem) lightFilterNewHead(newHeader *types.Header, callBack func
 	for oldh.Hash() != newh.Hash() {
 		if oldh.Number.Uint64() >= newh.Number.Uint64() {
 			oldHeaders = append(oldHeaders, oldh)
-			oldh = core.GetHeader(es.backend.ChainDb(), oldh.ParentHash, oldh.Number.Uint64()-1)
+			oldh = rawdb.ReadHeader(es.backend.ChainDb(), oldh.ParentHash, oldh.Number.Uint64()-1)
 		}
 		if oldh.Number.Uint64() < newh.Number.Uint64() {
 			newHeaders = append(newHeaders, newh)
-			newh = core.GetHeader(es.backend.ChainDb(), newh.ParentHash, newh.Number.Uint64()-1)
+			newh = rawdb.ReadHeader(es.backend.ChainDb(), newh.ParentHash, newh.Number.Uint64()-1)
 			if newh == nil {
 				// happens when CHT syncing, nothing to do
 				newh = oldh
@@ -375,19 +376,35 @@ func (es *EventSystem) lightFilterLogs(header *types.Header, addresses []common.
 		// Get the logs of the block
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
-		receipts, err := es.backend.GetReceipts(ctx, header.Hash())
+		logsList, err := es.backend.GetLogs(ctx, header.Hash())
 		if err != nil {
 			return nil
 		}
 		var unfiltered []*types.Log
-		for _, receipt := range receipts {
-			for _, log := range receipt.Logs {
+		for _, logs := range logsList {
+			for _, log := range logs {
 				logcopy := *log
 				logcopy.Removed = remove
 				unfiltered = append(unfiltered, &logcopy)
 			}
 		}
 		logs := filterLogs(unfiltered, nil, nil, addresses, topics)
+		if len(logs) > 0 && logs[0].TxHash == (common.Hash{}) {
+			// We have matching but non-derived logs
+			receipts, err := es.backend.GetReceipts(ctx, header.Hash())
+			if err != nil {
+				return nil
+			}
+			unfiltered = unfiltered[:0]
+			for _, receipt := range receipts {
+				for _, log := range receipt.Logs {
+					logcopy := *log
+					logcopy.Removed = remove
+					unfiltered = append(unfiltered, &logcopy)
+				}
+			}
+			logs = filterLogs(unfiltered, nil, nil, addresses, topics)
+		}
 		return logs
 	}
 	return nil

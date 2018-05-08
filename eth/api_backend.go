@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -96,12 +97,31 @@ func (b *EthApiBackend) StateAndHeaderByNumber(ctx context.Context, blockNr rpc.
 	return stateDb, header, err
 }
 
-func (b *EthApiBackend) GetBlock(ctx context.Context, blockHash common.Hash) (*types.Block, error) {
-	return b.eth.blockchain.GetBlockByHash(blockHash), nil
+func (b *EthApiBackend) GetBlock(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	return b.eth.blockchain.GetBlockByHash(hash), nil
 }
 
-func (b *EthApiBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
-	return core.GetBlockReceipts(b.eth.chainDb, blockHash, core.GetBlockNumber(b.eth.chainDb, blockHash)), nil
+func (b *EthApiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	if number := rawdb.ReadHeaderNumber(b.eth.chainDb, hash); number != nil {
+		return rawdb.ReadReceipts(b.eth.chainDb, hash, *number), nil
+	}
+	return nil, nil
+}
+
+func (b *EthApiBackend) GetLogs(ctx context.Context, hash common.Hash) ([][]*types.Log, error) {
+	number := rawdb.ReadHeaderNumber(b.eth.chainDb, hash)
+	if number == nil {
+		return nil, nil
+	}
+	receipts := rawdb.ReadReceipts(b.eth.chainDb, hash, *number)
+	if receipts == nil {
+		return nil, nil
+	}
+	logs := make([][]*types.Log, len(receipts))
+	for i, receipt := range receipts {
+		logs[i] = receipt.Logs
+	}
+	return logs, nil
 }
 
 func (b *EthApiBackend) GetTd(blockHash common.Hash) *big.Int {

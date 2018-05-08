@@ -22,8 +22,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -110,30 +108,6 @@ func Send(w MsgWriter, msgcode uint64, data interface{}) error {
 //
 func SendItems(w MsgWriter, msgcode uint64, elems ...interface{}) error {
 	return Send(w, msgcode, elems)
-}
-
-// netWrapper wraps a MsgReadWriter with locks around
-// ReadMsg/WriteMsg and applies read/write deadlines.
-type netWrapper struct {
-	rmu, wmu sync.Mutex
-
-	rtimeout, wtimeout time.Duration
-	conn               net.Conn
-	wrapped            MsgReadWriter
-}
-
-func (rw *netWrapper) ReadMsg() (Msg, error) {
-	rw.rmu.Lock()
-	defer rw.rmu.Unlock()
-	rw.conn.SetReadDeadline(time.Now().Add(rw.rtimeout))
-	return rw.wrapped.ReadMsg()
-}
-
-func (rw *netWrapper) WriteMsg(msg Msg) error {
-	rw.wmu.Lock()
-	defer rw.wmu.Unlock()
-	rw.conn.SetWriteDeadline(time.Now().Add(rw.wtimeout))
-	return rw.wrapped.WriteMsg(msg)
 }
 
 // eofSignal wraps a reader with eof signaling. the eof channel is
@@ -255,21 +229,20 @@ func ExpectMsg(r MsgReader, code uint64, content interface{}) error {
 	}
 	if content == nil {
 		return msg.Discard()
-	} else {
-		contentEnc, err := rlp.EncodeToBytes(content)
-		if err != nil {
-			panic("content encode error: " + err.Error())
-		}
-		if int(msg.Size) != len(contentEnc) {
-			return fmt.Errorf("message size mismatch: got %d, want %d", msg.Size, len(contentEnc))
-		}
-		actualContent, err := ioutil.ReadAll(msg.Payload)
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(actualContent, contentEnc) {
-			return fmt.Errorf("message payload mismatch:\ngot:  %x\nwant: %x", actualContent, contentEnc)
-		}
+	}
+	contentEnc, err := rlp.EncodeToBytes(content)
+	if err != nil {
+		panic("content encode error: " + err.Error())
+	}
+	if int(msg.Size) != len(contentEnc) {
+		return fmt.Errorf("message size mismatch: got %d, want %d", msg.Size, len(contentEnc))
+	}
+	actualContent, err := ioutil.ReadAll(msg.Payload)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(actualContent, contentEnc) {
+		return fmt.Errorf("message payload mismatch:\ngot:  %x\nwant: %x", actualContent, contentEnc)
 	}
 	return nil
 }
